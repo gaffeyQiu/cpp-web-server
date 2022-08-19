@@ -3,8 +3,17 @@
 #include <arpa/inet.h>
 #include <strings.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/epoll.h>
+#include <errno.h>
 #include "util.h"
 
+#define MAX_EVENTS 1024
+#define READ_BUFFER 1024
+
+void setnonblocking(int fd) {
+	fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+}
 
 int main() {
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -22,32 +31,64 @@ int main() {
 
 	printf("The Web Server Listening %s:%d\n", SERVER_HOST, SERVER_PORT);
 
-	struct sockaddr_in client_addr;
-	socklen_t client_addr_len = sizeof(client_addr);
-	bzero(&client_addr, sizeof(client_addr));
 
-	int client_sockfd = accept(sockfd, (sockaddr*)&client_addr, &client_addr_len);
-	printf("[client] fd: %d, IP: %s, Port: %d\n", client_sockfd, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+	int epfd = epoll_create1(0);
+	errif(epfd == -1, "epoll_create1()");
+
+	struct epoll_event events[MAX_EVENTS], ev;
+	bzero(&events, sizeof(events));
+	bzero(&ev, sizeof(ev));
+	ev.data.fd = sockfd;
+	ev.events = EPOLLIN | EPOLLET;
+	setnonblocking(sockfd);
+	epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev);
 
 	while (true) {
-		char buf[1024];
-		bzero(&buf, sizeof(buf));
-		
-		ssize_t read_bytes = read(client_sockfd, buf, sizeof(buf));
-		if (read_bytes > 0) {
-			printf("Client %d: %s\n", client_sockfd, buf);
-			write(client_sockfd, buf, sizeof(buf));
-			if (buf[0] == 'q') {
-				close(client_sockfd);
-				break;
+		int nfds = epoll_wait(epfd, events, MAX_EVENTS, -1);
+		errif(nfds == -1, "epoll_wait()");
+
+		for(int i = 0; i < nfds; i++) {
+			if (events[i].data.fd == sockfd) {	// 客户端链接
+				struct sockaddr_in client_addr;
+				bzero(&client_addr, sizeof(client_addr));
+				socklen_t client_addr_len = sizeof(client_addr);
+
+				int client_sockfd = accept(sockfd, (sockaddr*)&client_addr, &client_addr_len);
+				errif(client_sockfd == -1, "accept()");
+				printf("New Client: fd: %d, IP: %s, Port: %d\n", client_sockfd, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+				bzero(&ev, sizeof(ev));
+				ev.data.fd = client_sockfd;
+				ev.events = EPOLLIN | EPOLLET;
+				setnonblocking(client_sockfd);
+				epoll_ctl(epfd, EPOLL_CTL_ADD, client_sockfd, &ev);
+			} else if (events[i].events & EPOLLIN) { // 可读事件
+				char buf[READ_BUFFER];
+				while (true) {
+					bzero(&buf, sizeof(buf));
+					ssize_t bytes_read = read(events[i].data.fd, buf, sizeof(buf));
+					if(bytes_read > 0){
+                        printf("[client %d]: %s\n", events[i].data.fd, buf);
+                        write(events[i].data.fd, buf, sizeof(buf));
+						if (buf == "q") {
+							close(events[i].data.fd);
+							break;
+						}
+                    } else if(bytes_read == -1 && errno == EINTR){  //客户端正常中断、继续读取
+                        printf("continue reading");
+                        continue;
+                    } else if(bytes_read == -1 && ((errno == EAGAIN) || (errno == EWOULDBLOCK))){//非阻塞IO，这个条件表示数据全部读取完毕
+                        printf("finish reading once, errno: %d\n", errno);
+                        break;
+                    } else if(bytes_read == 0){  //EOF，客户端断开连接
+                        printf("EOF, client fd %d disconnected\n", events[i].data.fd);
+                        close(events[i].data.fd);   //关闭socket会自动将文件描述符从epoll树上移除
+                        break;
+                    }
+				}
+			} else {
+				printf("something happened\n");
 			}
-		} else if (read_bytes == 0) {
-			printf("Client %d disconnected\n", client_sockfd);
-			close(client_sockfd);
-			break;
-		} else {
-			errif(true, "read()");
-			close(client_sockfd);
 		}
 	}
 
