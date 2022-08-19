@@ -1,8 +1,8 @@
 all: server client
 
-server: clear
-	g++ server.cpp -o server
-client: clear
-	g++ client.cpp -o client
+server:
+	g++ util.cpp server.cpp -o server
+client:
+	g++ util.cpp client.cpp -o client
 clear:
-	rm -rf server client
+	rm server client *.out
