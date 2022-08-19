@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <strings.h>
+#include <unistd.h>
 #include "util.h"
 
 
@@ -26,8 +27,30 @@ int main() {
 	bzero(&client_addr, sizeof(client_addr));
 
 	int client_sockfd = accept(sockfd, (sockaddr*)&client_addr, &client_addr_len);
-
 	printf("[client] fd: %d, IP: %s, Port: %d\n", client_sockfd, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
+	while (true) {
+		char buf[1024];
+		bzero(&buf, sizeof(buf));
+		
+		ssize_t read_bytes = read(client_sockfd, buf, sizeof(buf));
+		if (read_bytes > 0) {
+			printf("Client %d: %s\n", client_sockfd, buf);
+			write(client_sockfd, buf, sizeof(buf));
+			if (buf[0] == 'q') {
+				close(client_sockfd);
+				break;
+			}
+		} else if (read_bytes == 0) {
+			printf("Client %d disconnected\n", client_sockfd);
+			close(client_sockfd);
+			break;
+		} else {
+			errif(true, "read()");
+			close(client_sockfd);
+		}
+	}
+
+	close(sockfd);
 	return 0;
 }
