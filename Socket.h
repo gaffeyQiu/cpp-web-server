@@ -4,6 +4,7 @@ class InetAddress;
 class Socket {
 	private:
 		int fd;
+		int enable = 1;
 	public:
 		Socket();
 		Socket(int);

@@ -8,6 +8,7 @@
 Socket::Socket() : fd(-1){
     fd = socket(AF_INET, SOCK_STREAM, 0);
     errif(fd == -1, "socket create error");
+    errif(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0, "setsockopt()");
 }
 
 Socket::Socket(int _fd) : fd(_fd){
