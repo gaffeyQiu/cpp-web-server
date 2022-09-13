@@ -2,7 +2,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <strings.h>
-#include "util.h"
+#include "src/util.h"
 
 
 int main() {
